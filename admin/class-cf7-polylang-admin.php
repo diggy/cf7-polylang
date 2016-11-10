@@ -370,7 +370,7 @@ class Cf7_Polylang_Admin {
 		//get available locales for CF7
 		require_once( ABSPATH . 'wp-admin/includes/translation-install.php' );
 		$cf7_locales = array();
-		$api = translations_api( 'plugins', array(
+		$api = @translations_api( 'plugins', array(
 			'slug' => 'contact-form-7',
 			'version' => WPCF7_VERSION ) );
 		if ( is_wp_error( $api ) ) {
