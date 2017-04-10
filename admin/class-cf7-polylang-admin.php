@@ -73,7 +73,7 @@ class Cf7_Polylang_Admin {
     if( !is_plugin_active("contact-form-7/wp-contact-form-7.php") || !defined ("POLYLANG_VERSION") ){
         deactivate_plugins( "cf7-polylang/cf7-polylang.php" );
         debug_msg("Deactivating CF7 Polylang Module Enxtension");
-        
+
         $button = '<a href="'.network_admin_url('plugins.php').'">Return to Plugins</a></a>';
         wp_die( '<p><strong>CF7 Polylang Module Extension</strong> requires both <strong>CfF7 & Polylang</strong> and has been deactivated!</p>'.$button );
 
@@ -105,7 +105,11 @@ class Cf7_Polylang_Admin {
 		    //enqueue de polylang scripts needed for this to work
 		  global $polylang;
 		  $polylang->admin_enqueue_scripts();
-      wp_enqueue_script( 'pll_post', POLYLANG_URL .'/js/post.min.js', array( 'jquery', 'wp-ajax-response', 'post', 'jquery-ui-autocomplete' ), POLYLANG_VERSION, true );
+      if( file_exists(ABSPATH .'wp-content/plugins/polylang/js/post.min.js') ){
+        wp_enqueue_script( 'pll_post', content_url('/plugins/polylang/js/post.min.js'), array( 'jquery', 'wp-ajax-response', 'post', 'jquery-ui-autocomplete' ), POLYLANG_VERSION, true );
+      }else{
+        wp_enqueue_script( 'pll_post', content_url('/plugins/polylang-pro/js/post.min.js'), array( 'jquery', 'wp-ajax-response', 'post', 'jquery-ui-autocomplete' ), POLYLANG_VERSION, true );
+      }
 		}
 
 	}
@@ -136,6 +140,8 @@ class Cf7_Polylang_Admin {
   * @param object $cf7_form CF7 form object
   */
   public function save_polylang_translations($cf7_form){
+    global $post_ID;
+    $post_ID = (int) $_POST['post_ID'];
     add_action('wpcf7_after_create', array(&$this, 'save_cf7_translations'));
     add_action('wpcf7_after_update', array(&$this, 'update_cf7_translations'));
   }
@@ -170,12 +176,14 @@ class Cf7_Polylang_Admin {
   * @param object $cf7_form CF7 form object
   * @param bool $is_update whether it is an update or not
   */
-  public function save_translations($cf7_form,$is_update){
+  public function save_translations($cf7_form, $is_update){
     global $polylang;
 
     $post_id = $cf7_form->id();
     $post = get_post( $post_id);
     $GLOBALS['post_type'] = $post->post_type;
+    //let's use polylang's hooked functionality that triggers when posts are saved
+    $_POST['post_ID'] = $post_id;
     $polylang->filters_post->save_post($post_id, $post, $is_update);
   }
   /**
@@ -224,12 +232,14 @@ class Cf7_Polylang_Admin {
 	public function polylang_metabox_edit_form(){
 		if( Cf7_WP_Post_Table::is_cf7_edit_page() ) {
   		// get polylang metabox
+      global $post_ID;
+
   		include( plugin_dir_path( __FILE__ ) . 'partials/cf7-polylang-edit-metabox.php');
     }
 	}
   /**
   * Change the 'Add New' button and introduce the langauge select
-  * Hooks on 'admin '
+  * Hooks on 'admin_print_footer_scripts'
   * @since 1.1.3
   */
   public function add_language_select_to_table_page(){
@@ -258,19 +268,35 @@ class Cf7_Polylang_Admin {
         }?>
       </select>
     </script>
+    <style>
+      #select-locales.wp47{
+        position:relative;
+        top: -4px;
+      }
+    </style>
     <script type="text/javascript">
       ( function( $ ) {
         $(document).ready( function(){
+          var addNewButton = $('h1 > a.page-title-action');
+          var isWP47 = false;
+          if(0 == addNewButton.length){ //wp 4.7+
+            addNewButton = $('h1 + a.page-title-action');
+            isWP47 = true;
+          }
           var language_selector = $('#select-locales-html').html();
-          var originalURL = $('h1 > a.page-title-action').attr('href');
+          var originalURL = addNewButton.attr('href');
           var locale = "<?php echo $default_locale; ?>";
           var lang = locale.substring(0,2);
-          $('h1 > a.page-title-action').attr('href',originalURL+'&locale='+locale+'&new_lang='+lang);
-          $('h1 > a.page-title-action').parent().append(language_selector);
+          addNewButton.attr('href',originalURL+'&locale='+locale+'&new_lang='+lang);
+          if(isWP47){
+            addNewButton.after($(language_selector).addClass('wp47'));
+          }else{
+            addNewButton.parent().append(language_selector);
+          }
           $('#select-locales').on('change', function() {
             locale = $(this).val();
             lang = locale.substring(0,2);
-            $('h1 > a.page-title-action').attr('href',originalURL+'&locale='+locale+'&new_lang='+lang);
+            addNewButton.attr('href',originalURL+'&locale='+locale+'&new_lang='+lang);
           });
         } );
       } )( jQuery );
@@ -352,6 +378,10 @@ class Cf7_Polylang_Admin {
 
 		//what locales are already installed
 		$local_locales = $this->scan_local_locales();
+    // foreach($local_locales as $locale){
+    //   //register locale for cf7 domain
+    //   load_textdomain( 'contact-form-7', WP_LANG_DIR . '/plugins/contact-form-7-'.$locale.'.mo' );
+    // }
 		//what are the needed locales
 		$languages = array();
 		if( function_exists('pll_languages_list') ){
@@ -387,13 +417,13 @@ class Cf7_Polylang_Admin {
 		foreach($languages as $locale){
 			if(isset($cf7_locales[$locale])){
 				$zipFile = $locale.'.zip';
-				$zipPath = ABSPATH . 'wp-content/languages/plugins/';// Local Zip File Path
+				$zipPath = WP_LANG_DIR . '/plugins/';// Local Zip File Path
 				//get the file stream, not using cURL as may not support https
 				file_put_contents($zipFile, fopen($cf7_locales[$locale], 'r'));
 
 				/* Open the Zip file */
 				$zip = new ZipArchive;
-				$extractPath = ABSPATH . 'wp-content/languages/plugins/';
+				$extractPath = WP_LANG_DIR . '/plugins/';
 				if($zip->open($zipFile) != "true"){
 				 debug_msg( "CF7 POLYLANG: Error, unable to open the Zip File ". $zipFile);
 				}
@@ -403,11 +433,13 @@ class Cf7_Polylang_Admin {
 				//delete zip file
 				unlink($zipFile);
 				//copy the .mo file to the CF7 language folder
-				if(! copy( ABSPATH . 'wp-content/languages/plugins/contact-form-7-'.$locale.'.mo',
-						 ABSPATH . 'wp-content/languages/plugins/contact-form-7/contact-form-7-'.$locale.'.mo') ){
+				if(! copy( WP_LANG_DIR . '/plugins/contact-form-7-'.$locale.'.mo',
+						 WP_LANG_DIR . '/plugins/contact-form-7/contact-form-7-'.$locale.'.mo') ){
 					debug_msg("CF7 POLYLANG: Unable to copy CF7 translation for locale ".$zipFile." to CF7 plugin folder.");
 				}else{
 					debug_msg("CF7 POLYLANG: Found and installed CF7 translation for locale ".$zipFile);
+          //register locale for cf7 domain
+          // load_textdomain( 'contact-form-7', WP_LANG_DIR . '/plugins/contact-form-7-'.$locale.'.mo' );
 				}
 			}else{
 				//we need to report the missing translation
@@ -424,10 +456,10 @@ class Cf7_Polylang_Admin {
 	 * @return		array	an array of locales
 	 */
 	protected function scan_local_locales(){
-    if(!is_dir(ABSPATH . 'wp-content/languages/plugins/contact-form-7/')){
-      mkdir(ABSPATH . 'wp-content/languages/plugins/contact-form-7/');
+    if(!is_dir(WP_LANG_DIR . '/plugins/contact-form-7/')){
+      wp_mkdir_p(WP_LANG_DIR . '/plugins/contact-form-7/');
     }
-		$translations = scandir(ABSPATH . 'wp-content/languages/plugins/contact-form-7/');
+		$translations = scandir(WP_LANG_DIR . '/plugins/contact-form-7/');
 		$local_locales = array();
 		foreach($translations as $translation_file){
 			$parts = pathinfo($translation_file);
@@ -452,13 +484,13 @@ class Cf7_Polylang_Admin {
 	 * @param		int	$tt_id  term_taxonomy_id
 	 * @param		string	$taxonomy  the taxonomy to which the new term was added
 	 */
-	public function new_plylang_locale_added( $term_id, $tt_id, $taxonomy ){
+	public function new_polylang_locale_added( $term_id, $tt_id, $taxonomy ){
 		//check if this is the polylang language taxonomy
 		if('language' != $taxonomy){
 			return;
 		}
-		//let's reset the textdomain
-		$this->load_plugin_textdomain();
+		//let's get the new locale cf7 translation
+		$this->get_cf7_translations();
 	}
   /**
    * Redirect to new table list on form delete
